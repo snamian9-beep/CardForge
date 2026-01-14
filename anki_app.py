@@ -3,24 +3,28 @@ import anthropic
 import base64
 import json
 import hashlib
-import re
 from datetime import datetime
 from pathlib import Path
-import time
 
-# Try to import sortables for drag-and-drop (optional)
+# Optional imports
 try:
     from streamlit_sortables import sort_items
     SORTABLES_AVAILABLE = True
 except ImportError:
     SORTABLES_AVAILABLE = False
 
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 # ============================================================
-# PAGE CONFIG & CONSTANTS
+# CONFIG
 # ============================================================
 st.set_page_config(
     page_title="CardForge",
-    page_icon="🎴",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -31,430 +35,596 @@ HISTORY_FILE = DATA_DIR / "card_history.json"
 STATS_FILE = DATA_DIR / "statistics.json"
 
 # ============================================================
-# THEME CONFIGURATION
+# DESIGN SYSTEM
 # ============================================================
-THEMES = {
+COLORS = {
     "light": {
-        "bg_primary": "#ffffff",
-        "bg_secondary": "#f8f9fa",
-        "bg_card": "#ffffff",
-        "text_primary": "#1a1a2e",
-        "text_secondary": "#666666",
-        "accent": "#667eea",
-        "accent_secondary": "#764ba2",
-        "border": "#e0e0e0",
-        "success": "#28a745",
-        "warning": "#ffc107",
-        "error": "#dc3545",
+        "bg": "#fafafa",
+        "surface": "#ffffff",
+        "surface_hover": "#f5f5f5",
+        "primary": "#6366f1",
+        "primary_light": "#818cf8",
+        "primary_dark": "#4f46e5",
+        "secondary": "#ec4899",
+        "text": "#18181b",
+        "text_muted": "#71717a",
+        "border": "#e4e4e7",
+        "success": "#10b981",
+        "warning": "#f59e0b",
+        "error": "#ef4444",
     },
     "dark": {
-        "bg_primary": "#1a1a2e",
-        "bg_secondary": "#16213e",
-        "bg_card": "#0f3460",
-        "text_primary": "#eaeaea",
-        "text_secondary": "#b0b0b0",
-        "accent": "#667eea",
-        "accent_secondary": "#764ba2",
-        "border": "#2a2a4a",
-        "success": "#4ecca3",
-        "warning": "#ffd369",
-        "error": "#ff6b6b",
+        "bg": "#09090b",
+        "surface": "#18181b",
+        "surface_hover": "#27272a",
+        "primary": "#818cf8",
+        "primary_light": "#a5b4fc",
+        "primary_dark": "#6366f1",
+        "secondary": "#f472b6",
+        "text": "#fafafa",
+        "text_muted": "#a1a1aa",
+        "border": "#27272a",
+        "success": "#34d399",
+        "warning": "#fbbf24",
+        "error": "#f87171",
     }
 }
 
-def get_theme_css(theme_name):
-    t = THEMES.get(theme_name, THEMES["light"])
+def get_css(theme="light"):
+    c = COLORS[theme]
     return f"""
-    <style>
-        /* Base Theme */
-        .stApp {{
-            background-color: {t['bg_primary']};
-        }}
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        .main-header {{
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(90deg, {t['accent']} 0%, {t['accent_secondary']} 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0;
-        }}
+    /* Global Reset */
+    .stApp {{
+        background: {c['bg']};
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }}
 
-        .sub-header {{
-            font-size: 1.1rem;
-            color: {t['text_secondary']};
-            margin-bottom: 2rem;
-        }}
+    /* Hide Streamlit branding */
+    #MainMenu, footer, header {{visibility: hidden;}}
+    .stDeployButton {{display: none;}}
 
-        /* Card Styles */
-        .card-container {{
-            background: {t['bg_card']};
-            border: 1px solid {t['border']};
-            border-radius: 12px;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            transition: all 0.3s ease;
-        }}
+    /* Typography */
+    h1, h2, h3, h4, h5, h6, p, span, div {{
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    }}
 
-        .card-container:hover {{
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
-            transform: translateY(-2px);
-        }}
+    /* Brand Header */
+    .brand {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0 24px 0;
+    }}
 
-        /* Flip Card Animation */
-        .flip-card {{
-            background-color: transparent;
-            width: 100%;
-            height: 200px;
-            perspective: 1000px;
-            cursor: pointer;
-        }}
+    .brand-icon {{
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, {c['primary']} 0%, {c['secondary']} 100%);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        color: white;
+        font-weight: 700;
+    }}
 
-        .flip-card-inner {{
-            position: relative;
-            width: 100%;
-            height: 100%;
-            text-align: center;
-            transition: transform 0.6s;
-            transform-style: preserve-3d;
-        }}
+    .brand-text {{
+        font-size: 24px;
+        font-weight: 700;
+        color: {c['text']};
+        letter-spacing: -0.5px;
+    }}
 
-        .flip-card.flipped .flip-card-inner {{
-            transform: rotateY(180deg);
-        }}
+    /* Section Headers */
+    .section-header {{
+        font-size: 13px;
+        font-weight: 600;
+        color: {c['text_muted']};
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: 24px 0 12px 0;
+    }}
 
-        .flip-card-front, .flip-card-back {{
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            -webkit-backface-visibility: hidden;
-            backface-visibility: hidden;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            font-size: 1.1rem;
-        }}
+    /* Cards */
+    .card {{
+        background: {c['surface']};
+        border: 1px solid {c['border']};
+        border-radius: 16px;
+        padding: 20px;
+        margin: 12px 0;
+        transition: all 0.2s ease;
+    }}
 
-        .flip-card-front {{
-            background: linear-gradient(135deg, {t['accent']} 0%, {t['accent_secondary']} 100%);
-            color: white;
-        }}
+    .card:hover {{
+        border-color: {c['primary']};
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
+    }}
 
-        .flip-card-back {{
-            background: {t['bg_card']};
-            border: 2px solid {t['accent']};
-            color: {t['text_primary']};
-            transform: rotateY(180deg);
-        }}
+    .card-header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }}
 
-        /* Quality Score Stars */
-        .quality-stars {{
-            color: {t['warning']};
-            font-size: 1.2rem;
-        }}
+    .card-number {{
+        font-size: 12px;
+        font-weight: 600;
+        color: {c['primary']};
+        background: {c['primary']}15;
+        padding: 4px 10px;
+        border-radius: 20px;
+    }}
 
-        /* Stats Cards */
-        .stat-card {{
-            background: linear-gradient(135deg, {t['bg_secondary']} 0%, {t['bg_card']} 100%);
-            border-radius: 12px;
-            padding: 1.5rem;
-            text-align: center;
-            border: 1px solid {t['border']};
-        }}
+    .card-quality {{
+        display: flex;
+        gap: 2px;
+    }}
 
-        .stat-number {{
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: linear-gradient(90deg, {t['accent']} 0%, {t['accent_secondary']} 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
+    .star {{
+        color: {c['warning']};
+        font-size: 14px;
+    }}
 
-        /* Keyboard shortcut hints */
-        .kbd {{
-            background: {t['bg_secondary']};
-            border: 1px solid {t['border']};
-            border-radius: 4px;
-            padding: 2px 6px;
-            font-family: monospace;
-            font-size: 0.85rem;
-        }}
+    .star-empty {{
+        color: {c['border']};
+        font-size: 14px;
+    }}
 
-        /* LaTeX styling */
-        .latex-content {{
-            font-size: 1.1rem;
-            line-height: 1.6;
-        }}
+    /* Flip Card */
+    .flip-container {{
+        perspective: 1000px;
+        margin: 16px 0;
+    }}
 
-        /* Duplicate warning */
-        .duplicate-warning {{
-            background: {t['warning']}22;
-            border-left: 4px solid {t['warning']};
-            padding: 0.5rem 1rem;
-            border-radius: 0 8px 8px 0;
-            margin: 0.5rem 0;
-        }}
+    .flip-card {{
+        width: 100%;
+        height: 180px;
+        position: relative;
+        transform-style: preserve-3d;
+        transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+    }}
 
-        /* Tab styling */
-        .stTabs [data-baseweb="tab-list"] {{
-            gap: 8px;
-        }}
+    .flip-card.flipped {{
+        transform: rotateY(180deg);
+    }}
 
-        .stTabs [data-baseweb="tab"] {{
-            background-color: {t['bg_secondary']};
-            border-radius: 8px 8px 0 0;
-            padding: 10px 20px;
-        }}
+    .flip-face {{
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        backface-visibility: hidden;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+        font-size: 15px;
+        line-height: 1.5;
+    }}
 
-        .stTabs [aria-selected="true"] {{
-            background: linear-gradient(90deg, {t['accent']} 0%, {t['accent_secondary']} 100%);
-        }}
-    </style>
-    """
+    .flip-front {{
+        background: linear-gradient(135deg, {c['primary']} 0%, {c['primary_dark']} 100%);
+        color: white;
+        font-weight: 500;
+    }}
+
+    .flip-back {{
+        background: {c['surface']};
+        border: 2px solid {c['primary']};
+        color: {c['text']};
+        transform: rotateY(180deg);
+    }}
+
+    .flip-hint {{
+        font-size: 12px;
+        color: {c['text_muted']};
+        text-align: center;
+        margin-top: 8px;
+    }}
+
+    /* Stats Grid */
+    .stats-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin: 16px 0;
+    }}
+
+    .stat-card {{
+        background: {c['surface']};
+        border: 1px solid {c['border']};
+        border-radius: 16px;
+        padding: 20px;
+        text-align: center;
+    }}
+
+    .stat-value {{
+        font-size: 32px;
+        font-weight: 700;
+        background: linear-gradient(135deg, {c['primary']} 0%, {c['secondary']} 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }}
+
+    .stat-label {{
+        font-size: 13px;
+        color: {c['text_muted']};
+        margin-top: 4px;
+    }}
+
+    /* Progress Bar */
+    .progress-container {{
+        margin: 8px 0;
+    }}
+
+    .progress-label {{
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        margin-bottom: 6px;
+    }}
+
+    .progress-name {{
+        color: {c['text']};
+        font-weight: 500;
+    }}
+
+    .progress-value {{
+        color: {c['text_muted']};
+    }}
+
+    .progress-bar {{
+        height: 8px;
+        background: {c['border']};
+        border-radius: 4px;
+        overflow: hidden;
+    }}
+
+    .progress-fill {{
+        height: 100%;
+        background: linear-gradient(90deg, {c['primary']} 0%, {c['secondary']} 100%);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }}
+
+    /* Badges */
+    .badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 500;
+    }}
+
+    .badge-success {{
+        background: {c['success']}15;
+        color: {c['success']};
+    }}
+
+    .badge-warning {{
+        background: {c['warning']}15;
+        color: {c['warning']};
+    }}
+
+    .badge-error {{
+        background: {c['error']}15;
+        color: {c['error']};
+    }}
+
+    .badge-primary {{
+        background: {c['primary']}15;
+        color: {c['primary']};
+    }}
+
+    /* Empty State */
+    .empty-state {{
+        text-align: center;
+        padding: 48px 24px;
+        color: {c['text_muted']};
+    }}
+
+    .empty-icon {{
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }}
+
+    .empty-title {{
+        font-size: 18px;
+        font-weight: 600;
+        color: {c['text']};
+        margin-bottom: 8px;
+    }}
+
+    .empty-desc {{
+        font-size: 14px;
+        max-width: 300px;
+        margin: 0 auto;
+    }}
+
+    /* Sidebar Styling */
+    section[data-testid="stSidebar"] {{
+        background: {c['surface']};
+        border-right: 1px solid {c['border']};
+    }}
+
+    section[data-testid="stSidebar"] .block-container {{
+        padding: 24px 16px;
+    }}
+
+    /* Input Styling */
+    .stTextInput > div > div > input,
+    .stTextArea > div > div > textarea,
+    .stSelectbox > div > div {{
+        border-radius: 12px !important;
+        border-color: {c['border']} !important;
+        font-family: 'Inter', sans-serif !important;
+    }}
+
+    .stTextInput > div > div > input:focus,
+    .stTextArea > div > div > textarea:focus {{
+        border-color: {c['primary']} !important;
+        box-shadow: 0 0 0 3px {c['primary']}20 !important;
+    }}
+
+    /* Button Styling */
+    .stButton > button {{
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+        font-family: 'Inter', sans-serif !important;
+        padding: 12px 24px !important;
+        transition: all 0.2s ease !important;
+    }}
+
+    .stButton > button[kind="primary"] {{
+        background: linear-gradient(135deg, {c['primary']} 0%, {c['primary_dark']} 100%) !important;
+        border: none !important;
+    }}
+
+    .stButton > button[kind="primary"]:hover {{
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 12px {c['primary']}40 !important;
+    }}
+
+    /* Expander Styling */
+    .streamlit-expanderHeader {{
+        background: {c['surface']} !important;
+        border: 1px solid {c['border']} !important;
+        border-radius: 12px !important;
+        font-weight: 500 !important;
+    }}
+
+    .streamlit-expanderContent {{
+        border: 1px solid {c['border']} !important;
+        border-top: none !important;
+        border-radius: 0 0 12px 12px !important;
+    }}
+
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 0;
+        background: {c['surface']};
+        border-radius: 12px;
+        padding: 4px;
+        border: 1px solid {c['border']};
+    }}
+
+    .stTabs [data-baseweb="tab"] {{
+        border-radius: 8px;
+        padding: 12px 20px;
+        font-weight: 500;
+        color: {c['text_muted']};
+    }}
+
+    .stTabs [aria-selected="true"] {{
+        background: {c['primary']} !important;
+        color: white !important;
+    }}
+
+    /* Metric Cards */
+    [data-testid="stMetricValue"] {{
+        font-size: 28px !important;
+        font-weight: 700 !important;
+    }}
+
+    /* Download Button */
+    .stDownloadButton > button {{
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+    }}
+
+    /* Divider */
+    hr {{
+        border: none;
+        border-top: 1px solid {c['border']};
+        margin: 24px 0;
+    }}
+
+    /* Toggle */
+    .stCheckbox label span {{
+        font-weight: 500 !important;
+    }}
+
+    /* File Uploader */
+    [data-testid="stFileUploader"] {{
+        border-radius: 12px;
+    }}
+
+    [data-testid="stFileUploader"] section {{
+        border-radius: 12px !important;
+        border: 2px dashed {c['border']} !important;
+        padding: 24px !important;
+    }}
+
+    [data-testid="stFileUploader"] section:hover {{
+        border-color: {c['primary']} !important;
+    }}
+
+    /* Duplicate Warning */
+    .duplicate-badge {{
+        background: {c['warning']}15;
+        color: {c['warning']};
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 500;
+    }}
+</style>
+"""
 
 # ============================================================
-# SESSION STATE INITIALIZATION
+# STATE & PERSISTENCE
 # ============================================================
-def init_session_state():
+def init_state():
     defaults = {
         "cards": [],
         "generated": False,
         "theme": "light",
         "history": [],
-        "current_tab": "generate",
+        "stats": {"total": 0, "by_subject": {}, "by_date": {}, "sessions": 0},
+        "show_explanations": True,
         "bulk_mode": False,
         "preview_mode": False,
-        "show_explanations": True,
-        "card_order": [],
         "reorder_mode": False,
-        "image_cards_mode": False,
-        "statistics": {
-            "total_cards_created": 0,
-            "cards_by_subject": {},
-            "cards_by_date": {},
-            "sessions": 0
-        },
-        "anki_connect_enabled": False,
-        "detected_subject": None,
-        "card_images": {},  # Store images for cards: {card_index: {"front_img": base64, "back_img": base64}}
+        "anki_connected": False,
     }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+    load_data()
 
-    # Load history and stats from disk
-    load_history()
-    load_statistics()
-
-def load_history():
+def load_data():
     if HISTORY_FILE.exists():
         try:
-            with open(HISTORY_FILE, "r") as f:
-                st.session_state.history = json.load(f)
+            st.session_state.history = json.loads(HISTORY_FILE.read_text())
         except:
-            st.session_state.history = []
-
-def save_history():
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(st.session_state.history, f, indent=2)
-
-def load_statistics():
+            pass
     if STATS_FILE.exists():
         try:
-            with open(STATS_FILE, "r") as f:
-                st.session_state.statistics = json.load(f)
+            st.session_state.stats = json.loads(STATS_FILE.read_text())
         except:
             pass
 
-def save_statistics():
-    with open(STATS_FILE, "w") as f:
-        json.dump(st.session_state.statistics, f, indent=2)
+def save_data():
+    HISTORY_FILE.write_text(json.dumps(st.session_state.history, indent=2))
+    STATS_FILE.write_text(json.dumps(st.session_state.stats, indent=2))
 
-def update_statistics(num_cards, subject):
-    stats = st.session_state.statistics
-    stats["total_cards_created"] += num_cards
-    stats["sessions"] += 1
-
-    # By subject
-    if subject not in stats["cards_by_subject"]:
-        stats["cards_by_subject"][subject] = 0
-    stats["cards_by_subject"][subject] += num_cards
-
-    # By date
+def update_stats(count, subject):
+    s = st.session_state.stats
+    s["total"] += count
+    s["sessions"] += 1
+    s["by_subject"][subject] = s["by_subject"].get(subject, 0) + count
     today = datetime.now().strftime("%Y-%m-%d")
-    if today not in stats["cards_by_date"]:
-        stats["cards_by_date"][today] = 0
-    stats["cards_by_date"][today] += num_cards
-
-    save_statistics()
+    s["by_date"][today] = s["by_date"].get(today, 0) + count
+    save_data()
 
 # ============================================================
-# EXAM CONTEXTS & CARD FORMATS
+# EXAM CONFIGS
 # ============================================================
-exam_context = {
-    "MCAT": """This is for the MCAT. Focus on foundational physics, chemistry, biology, biochemistry concepts. Emphasize relationships and principles, not specific calculations. Target AAMC high-yield topics.""",
-    "USMLE Step 1": """This is for USMLE Step 1. Focus on First Aid high-yield facts, pathophysiology, mechanisms, pharmacology MOA/side effects, microbiology, and pathology buzzwords.""",
-    "USMLE Step 2 CK": """This is for USMLE Step 2 CK. Focus on clinical management, next best steps, diagnosis from presentation, treatment algorithms, and standard of care.""",
-    "Medical School (Preclinical)": """This is for medical school preclinical courses. Focus on mechanisms, pathways, and integration across organ systems.""",
-    "Medical School (Clinical)": """This is for clinical rotations/shelf exams. Focus on diagnosis, management, and clinical decision making.""",
-    "Nursing (NCLEX)": """This is for NCLEX. Focus on patient safety, prioritization, delegation, and nursing interventions.""",
-    "PA School": """This is for PA school/PANCE. Focus on clinical medicine, diagnosis, and treatment across specialties.""",
-    "Pharmacy (NAPLEX)": """This is for NAPLEX. Focus on drug interactions, dosing, counseling points, and clinical pharmacology.""",
-    "General": """Focus on foundational concepts useful for any learner studying this topic.""",
-    "Auto-Detect": """Analyze the content and determine the most appropriate subject area, then create cards accordingly."""
+EXAMS = {
+    "Auto-Detect": "Analyze content and determine the best approach.",
+    "MCAT": "Focus on foundational sciences, AAMC high-yield topics.",
+    "USMLE Step 1": "First Aid facts, pathophysiology, pharmacology.",
+    "USMLE Step 2": "Clinical management, diagnosis, treatment.",
+    "Medical School": "Mechanisms, pathways, integration.",
+    "Nursing (NCLEX)": "Patient safety, prioritization, interventions.",
+    "PA School": "Clinical medicine across specialties.",
+    "Pharmacy": "Drug interactions, dosing, counseling.",
+    "General": "Foundational concepts for any topic.",
 }
 
-card_format_instructions = {
-    "Basic (Q&A)": """Create standard question and answer cards.
-Format: Question text here\tAnswer text here""",
-
-    "Cloze (Fill-in-blank)": """Create fill-in-the-blank cards using Anki cloze format.
-Format: Text with {{c1::hidden answer}} in it\t
-Put the most important term in the {{c1::brackets}}.""",
-
-    "Multiple Choice": """Create multiple choice questions with 4 options.
-Format: Question (A) wrong (B) wrong (C) correct (D) wrong\tC
-Always put the correct answer as the Back, just the letter.""",
-
-    "Mix of All Types": """Create a variety of card types - some basic Q&A, some cloze deletions, some multiple choice.
-For basic: Question\tAnswer
-For cloze: Text with {{c1::hidden}}\t
-For MC: Question (A) opt (B) opt (C) opt (D) opt\tCorrectLetter"""
+FORMATS = {
+    "Question & Answer": "Question\tAnswer",
+    "Cloze (Fill-in-blank)": "Text with {{c1::hidden}} format",
+    "Multiple Choice": "Question with A/B/C/D options",
+    "Mixed": "Variety of all formats",
 }
 
 # ============================================================
-# UTILITY FUNCTIONS
+# UTILITIES
 # ============================================================
-def get_card_hash(front, back):
-    """Generate hash for duplicate detection"""
-    content = f"{front.lower().strip()}{back.lower().strip()}"
-    return hashlib.md5(content.encode()).hexdigest()[:8]
+def get_hash(front, back):
+    return hashlib.md5(f"{front.lower()}{back.lower()}".encode()).hexdigest()[:8]
 
-def find_duplicates(new_cards, existing_cards):
-    """Find potential duplicates based on content similarity"""
-    existing_hashes = {get_card_hash(c["front"], c["back"]) for c in existing_cards}
-    duplicates = []
-    for i, card in enumerate(new_cards):
-        card_hash = get_card_hash(card["front"], card["back"])
-        if card_hash in existing_hashes:
-            duplicates.append(i)
-        # Also check for similar content using simple word overlap
-        for existing in existing_cards:
-            if calculate_similarity(card["front"], existing["front"]) > 0.7:
-                if i not in duplicates:
-                    duplicates.append(i)
-    return duplicates
-
-def calculate_similarity(text1, text2):
-    """Simple word-based similarity calculation"""
-    words1 = set(text1.lower().split())
-    words2 = set(text2.lower().split())
-    if not words1 or not words2:
+def similarity(a, b):
+    wa, wb = set(a.lower().split()), set(b.lower().split())
+    if not wa or not wb:
         return 0
-    intersection = words1 & words2
-    union = words1 | words2
-    return len(intersection) / len(union)
+    return len(wa & wb) / len(wa | wb)
 
-def calculate_quality_score(card):
-    """Calculate quality score for a card (1-5)"""
-    score = 3  # Base score
-    front = card.get("front", "")
-    back = card.get("back", "")
+def find_duplicates(new_cards, existing):
+    hashes = {get_hash(c["front"], c["back"]) for c in existing}
+    dupes = []
+    for i, card in enumerate(new_cards):
+        if get_hash(card["front"], card["back"]) in hashes:
+            dupes.append(i)
+        elif any(similarity(card["front"], e["front"]) > 0.7 for e in existing):
+            dupes.append(i)
+    return dupes
 
-    # Length checks
-    if 10 < len(front) < 200:
-        score += 0.5
-    if 5 < len(back) < 500:
-        score += 0.5
-
-    # Penalize vague references
-    bad_patterns = ["the passage", "the figure", "the graph", "this question", "the experiment"]
-    for pattern in bad_patterns:
-        if pattern in front.lower() or pattern in back.lower():
-            score -= 1
-
-    # Reward clear question words
-    good_starts = ["what", "how", "why", "which", "where", "when", "define", "explain"]
-    if any(front.lower().strip().startswith(w) for w in good_starts):
-        score += 0.5
-
-    # Ensure score is within bounds
+def quality_score(card):
+    score = 3
+    f, b = card.get("front", ""), card.get("back", "")
+    if 10 < len(f) < 200: score += 0.5
+    if 5 < len(b) < 500: score += 0.5
+    bad = ["the passage", "the figure", "the graph", "this question"]
+    for p in bad:
+        if p in f.lower() or p in b.lower(): score -= 1
+    good = ["what", "how", "why", "which", "define", "explain"]
+    if any(f.lower().startswith(w) for w in good): score += 0.5
     return max(1, min(5, round(score)))
 
-def render_latex(text):
-    """Convert LaTeX notation for display"""
-    # Streamlit supports LaTeX with st.latex() and $...$ in markdown
-    return text
-
-def extract_text_from_pdf(pdf_file):
-    """Extract text from PDF file"""
-    try:
-        import PyPDF2
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n\n"
-        return text
-    except ImportError:
+def extract_pdf(file):
+    if not PDF_AVAILABLE:
         return None
-    except Exception as e:
-        return f"Error extracting PDF: {str(e)}"
-
-# ============================================================
-# ANKI CONNECT INTEGRATION
-# ============================================================
-def check_anki_connect():
-    """Check if AnkiConnect is available"""
     try:
-        import urllib.request
-        req = urllib.request.Request("http://localhost:8765",
-            data=json.dumps({"action": "version", "version": 6}).encode())
-        response = urllib.request.urlopen(req, timeout=1)
-        return json.loads(response.read())
+        reader = PyPDF2.PdfReader(file)
+        return "\n\n".join(p.extract_text() for p in reader.pages)
     except:
         return None
 
-def send_to_anki(cards, deck_name, tags):
-    """Send cards directly to Anki via AnkiConnect"""
+def check_anki():
     try:
         import urllib.request
+        req = urllib.request.Request(
+            "http://localhost:8765",
+            data=json.dumps({"action": "version", "version": 6}).encode()
+        )
+        resp = urllib.request.urlopen(req, timeout=1)
+        return json.loads(resp.read())
+    except:
+        return None
 
-        # First, ensure deck exists
-        create_deck = {
-            "action": "createDeck",
-            "version": 6,
-            "params": {"deck": deck_name}
-        }
-        req = urllib.request.Request("http://localhost:8765",
-            data=json.dumps(create_deck).encode())
-        urllib.request.urlopen(req, timeout=5)
-
+def send_to_anki(cards, deck, tags):
+    try:
+        import urllib.request
+        # Create deck
+        urllib.request.urlopen(urllib.request.Request(
+            "http://localhost:8765",
+            data=json.dumps({"action": "createDeck", "version": 6, "params": {"deck": deck}}).encode()
+        ), timeout=5)
         # Add notes
-        notes = []
-        for card in cards:
-            note = {
-                "deckName": deck_name,
-                "modelName": "Basic",
-                "fields": {
-                    "Front": card["front"],
-                    "Back": card["back"]
-                },
-                "tags": tags.split(",") if tags else []
-            }
-            notes.append(note)
-
-        add_notes = {
-            "action": "addNotes",
-            "version": 6,
-            "params": {"notes": notes}
-        }
-        req = urllib.request.Request("http://localhost:8765",
-            data=json.dumps(add_notes).encode())
-        response = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(response.read())
-        return result
+        notes = [{
+            "deckName": deck,
+            "modelName": "Basic",
+            "fields": {"Front": c["front"], "Back": c["back"]},
+            "tags": [t.strip() for t in tags.split(",")] if tags else []
+        } for c in cards]
+        resp = urllib.request.urlopen(urllib.request.Request(
+            "http://localhost:8765",
+            data=json.dumps({"action": "addNotes", "version": 6, "params": {"notes": notes}}).encode()
+        ), timeout=10)
+        return json.loads(resp.read())
     except Exception as e:
         return {"error": str(e)}
 
@@ -462,741 +632,469 @@ def send_to_anki(cards, deck_name, tags):
 # AI FUNCTIONS
 # ============================================================
 def detect_subject(client, content):
-    """Auto-detect the subject/exam type from content"""
     try:
-        message = client.messages.create(
+        resp = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=100,
-            messages=[{
-                "role": "user",
-                "content": f"""Analyze this educational content and respond with ONLY the most appropriate category from this list:
-MCAT, USMLE Step 1, USMLE Step 2 CK, Medical School (Preclinical), Medical School (Clinical), Nursing (NCLEX), PA School, Pharmacy (NAPLEX), General
-
-Content: {content[:1000]}
-
-Respond with just the category name, nothing else."""
-            }]
+            max_tokens=50,
+            messages=[{"role": "user", "content": f"Categorize this content. Reply with ONLY one: MCAT, USMLE Step 1, USMLE Step 2, Medical School, Nursing (NCLEX), PA School, Pharmacy, General\n\n{content[:800]}"}]
         )
-        detected = message.content[0].text.strip()
-        if detected in exam_context:
-            return detected
-        return "General"
+        detected = resp.content[0].text.strip()
+        return detected if detected in EXAMS else "General"
     except:
         return "General"
 
-def generate_cards_with_explanation(client, content, settings):
-    """Generate cards with explanations for each"""
-    prompt_base = """You are an expert at creating Anki flashcards from wrong test answers.
+def generate_cards(client, content, settings):
+    prompt = f"""Create {settings['count']} Anki flashcards from this content.
 
-YOUR GOAL: Create cards that will help on FUTURE questions about this topic.
+RULES:
+- Focus on transferable concepts, not specific question details
+- Each card tests ONE clear concept
+- Avoid references to "the passage" or "the figure"
+- Make cards useful for anyone studying this topic
 
-QUALITY RULES:
-1. Focus on transferable concepts, principles, and relationships
-2. Front of card must have ONE clear, unambiguous answer
-3. Ask about mechanisms, definitions, and general principles
-4. Cards should be useful even to someone who never saw this question
+CONTEXT: {EXAMS[settings['exam']]}
+FORMAT: {FORMATS[settings['format']]}
+DIFFICULTY: {settings['difficulty']}
 
-AVOID (these make cards useless for future studying):
-- Referencing "the passage," "the figure," "the graph," or "the experiment"
-- Using specific numbers, values, or data points from the question
-- Asking about experimental setups or scenarios from the question
-- Comparisons that only make sense with the original context
+{"USER NOTE: " + settings['instructions'] if settings['instructions'] else ""}
 
-IMPORTANT: For each card, also provide a brief explanation of WHY you created this card and what concept it tests.
+For each card, output:
+CARD: [front]<TAB>[back]
+WHY: [one sentence explaining the concept tested]
 
-Format each card as:
-CARD: [front of card]\t[back of card]
-EXPLANATION: [why this card is useful]
-
-One card per CARD/EXPLANATION pair. No other formatting."""
-
-    difficulty_instruction = {
-        "Basic recall": "Make simple factual recall cards.",
-        "Standard": "Make standard difficulty cards testing understanding.",
-        "Application": "Make cards that require applying concepts to scenarios.",
-        "Integration": "Make challenging cards that integrate multiple concepts."
-    }
-
-    full_prompt = prompt_base + "\n\n" + exam_context[settings["exam_type"]]
-    full_prompt += "\n\n" + card_format_instructions[settings["card_format"]]
-    full_prompt += f"\n\n{difficulty_instruction[settings['difficulty']]}"
-    full_prompt += f"\n\nGenerate exactly {settings['num_cards']} cards."
-
-    if settings.get("custom_instructions"):
-        full_prompt += f"\n\nUser instructions: {settings['custom_instructions']}"
+Content:
+{content}"""
 
     if settings.get("is_image"):
-        messages_content = [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": content}},
-            {"type": "text", "text": full_prompt}
-        ]
+        messages = [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": content}}, {"type": "text", "text": prompt}]
     else:
-        messages_content = [{"type": "text", "text": full_prompt + "\n\n" + content}]
+        messages = [{"type": "text", "text": prompt}]
 
-    message = client.messages.create(
+    resp = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3000,
-        messages=[{"role": "user", "content": messages_content}]
+        messages=[{"role": "user", "content": messages}]
     )
 
-    response = message.content[0].text
-
-    # Parse response with explanations
+    # Parse response
     cards = []
-    lines = response.strip().split("\n")
-    current_card = None
+    lines = resp.content[0].text.strip().split("\n")
+    current = None
 
     for line in lines:
         line = line.strip()
         if line.startswith("CARD:"):
-            card_content = line[5:].strip()
-            if "\t" in card_content:
-                parts = card_content.split("\t")
-                current_card = {
-                    "front": parts[0].strip(),
-                    "back": parts[1].strip() if len(parts) > 1 else "",
-                    "keep": True,
-                    "explanation": "",
-                    "quality_score": 3
-                }
-        elif line.startswith("EXPLANATION:") and current_card:
-            current_card["explanation"] = line[12:].strip()
-            current_card["quality_score"] = calculate_quality_score(current_card)
-            cards.append(current_card)
-            current_card = None
+            content = line[5:].strip()
+            if "\t" in content:
+                parts = content.split("\t")
+                current = {"front": parts[0].strip(), "back": parts[1].strip() if len(parts) > 1 else "", "keep": True, "explanation": ""}
+            elif "<TAB>" in content:
+                parts = content.split("<TAB>")
+                current = {"front": parts[0].strip(), "back": parts[1].strip() if len(parts) > 1 else "", "keep": True, "explanation": ""}
+        elif line.startswith("WHY:") and current:
+            current["explanation"] = line[4:].strip()
+            current["quality"] = quality_score(current)
+            cards.append(current)
+            current = None
 
-    # Fallback parsing for simpler format
+    # Fallback parsing
     if not cards:
-        for line in response.strip().split("\n"):
-            if "\t" in line and not line.startswith("CARD:") and not line.startswith("EXPLANATION:"):
+        for line in lines:
+            if "\t" in line and not line.startswith(("CARD:", "WHY:")):
                 parts = line.split("\t")
-                if len(parts) >= 1:
-                    card = {
-                        "front": parts[0].strip(),
-                        "back": parts[1].strip() if len(parts) > 1 else "",
-                        "keep": True,
-                        "explanation": "Standard card generation",
-                        "quality_score": 3
-                    }
-                    card["quality_score"] = calculate_quality_score(card)
-                    cards.append(card)
+                card = {"front": parts[0].strip(), "back": parts[1].strip() if len(parts) > 1 else "", "keep": True, "explanation": "", "quality": 3}
+                card["quality"] = quality_score(card)
+                cards.append(card)
 
     return cards
 
 # ============================================================
 # UI COMPONENTS
 # ============================================================
-def render_flip_card(card, index):
-    """Render an interactive flip card preview"""
-    st.markdown(f"""
-    <div class="flip-card" onclick="this.classList.toggle('flipped')" id="flip-{index}">
-        <div class="flip-card-inner">
-            <div class="flip-card-front">
-                <div>{card['front'][:150]}{'...' if len(card['front']) > 150 else ''}</div>
-            </div>
-            <div class="flip-card-back">
-                <div>{card['back'][:150]}{'...' if len(card['back']) > 150 else ''}</div>
-            </div>
+def render_brand():
+    st.markdown("""
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <span class="brand-text">CardForge</span>
         </div>
-    </div>
-    <p style="text-align: center; color: #888; font-size: 0.8rem;">Click to flip</p>
     """, unsafe_allow_html=True)
 
-def render_quality_stars(score):
-    """Render quality score as stars"""
+def render_stars(score):
     filled = "★" * score
-    empty = "☆" * (5 - score)
-    return f'<span class="quality-stars">{filled}{empty}</span>'
+    empty = "★" * (5 - score)
+    return f'<span class="star">{filled}</span><span class="star-empty">{empty}</span>'
 
-def render_card_editor(card, index):
-    """Render an editable card with all features"""
-    col_check, col_content = st.columns([0.05, 0.95])
+def render_flip_card(card, idx):
+    front = card['front'][:120] + "..." if len(card['front']) > 120 else card['front']
+    back = card['back'][:120] + "..." if len(card['back']) > 120 else card['back']
+    st.markdown(f"""
+        <div class="flip-container">
+            <div class="flip-card" onclick="this.classList.toggle('flipped')">
+                <div class="flip-face flip-front">{front}</div>
+                <div class="flip-face flip-back">{back}</div>
+            </div>
+        </div>
+        <p class="flip-hint">Click to flip</p>
+    """, unsafe_allow_html=True)
 
-    with col_check:
-        card["keep"] = st.checkbox("", value=card.get("keep", True), key=f"keep_{index}", label_visibility="collapsed")
+def render_card_editor(card, idx):
+    col1, col2 = st.columns([0.06, 0.94])
 
-    with col_content:
-        # Check for duplicates
-        is_duplicate = card.get("is_duplicate", False)
+    with col1:
+        card["keep"] = st.checkbox("", value=card.get("keep", True), key=f"keep_{idx}", label_visibility="collapsed")
 
-        header = f"**Card {index+1}** "
-        header += render_quality_stars(card.get("quality_score", 3))
+    with col2:
+        is_dupe = card.get("is_duplicate", False)
+        q = card.get("quality", 3)
 
-        if is_duplicate:
-            st.markdown(f'<div class="duplicate-warning">⚠️ Possible duplicate detected</div>', unsafe_allow_html=True)
+        preview = card['front'][:60] + "..." if len(card['front']) > 60 else card['front']
+        header = f"Card {idx + 1}"
 
-        with st.expander(f"{header} - {card['front'][:50]}{'...' if len(card['front']) > 50 else ''}", expanded=False):
-            card["front"] = st.text_area("Front", value=card["front"], key=f"front_{index}", height=80)
-            card["back"] = st.text_area("Back", value=card["back"], key=f"back_{index}", height=80)
+        with st.expander(header, expanded=False):
+            if is_dupe:
+                st.markdown('<span class="duplicate-badge">Possible duplicate</span>', unsafe_allow_html=True)
 
-            # Image cards mode - allow adding images to front/back
-            if st.session_state.get("image_cards_mode", False):
-                st.markdown("**🖼️ Card Images:**")
-                img_col1, img_col2 = st.columns(2)
+            st.markdown(f"Quality: {render_stars(q)}", unsafe_allow_html=True)
 
-                with img_col1:
-                    front_img = st.file_uploader(
-                        "Front image",
-                        type=["png", "jpg", "jpeg"],
-                        key=f"front_img_{index}"
-                    )
-                    if front_img:
-                        front_img.seek(0)
-                        img_data = base64.b64encode(front_img.read()).decode("utf-8")
-                        card["front_image"] = img_data
-                        st.image(f"data:image/png;base64,{img_data}", width=150)
-                    elif card.get("front_image"):
-                        st.image(f"data:image/png;base64,{card['front_image']}", width=150)
+            card["front"] = st.text_area("Front", value=card["front"], key=f"front_{idx}", height=80, label_visibility="collapsed", placeholder="Front of card...")
+            card["back"] = st.text_area("Back", value=card["back"], key=f"back_{idx}", height=80, label_visibility="collapsed", placeholder="Back of card...")
 
-                with img_col2:
-                    back_img = st.file_uploader(
-                        "Back image",
-                        type=["png", "jpg", "jpeg"],
-                        key=f"back_img_{index}"
-                    )
-                    if back_img:
-                        back_img.seek(0)
-                        img_data = base64.b64encode(back_img.read()).decode("utf-8")
-                        card["back_image"] = img_data
-                        st.image(f"data:image/png;base64,{img_data}", width=150)
-                    elif card.get("back_image"):
-                        st.image(f"data:image/png;base64,{card['back_image']}", width=150)
-
-            # LaTeX preview
-            if "$" in card["front"] or "$" in card["back"]:
-                st.markdown("**LaTeX Preview:**")
-                if "$" in card["front"]:
-                    st.markdown(card["front"])
-                if "$" in card["back"]:
-                    st.markdown(card["back"])
-
-            # Show explanation if available
             if card.get("explanation") and st.session_state.show_explanations:
-                st.info(f"💡 **Why this card:** {card['explanation']}")
-
-            # Quality score display
-            st.markdown(f"Quality: {render_quality_stars(card.get('quality_score', 3))}", unsafe_allow_html=True)
+                st.caption(f"💡 {card['explanation']}")
 
     return card
 
-def render_statistics_dashboard():
-    """Render the statistics dashboard"""
-    stats = st.session_state.statistics
+def render_stats():
+    s = st.session_state.stats
 
-    st.markdown("## 📊 Your CardForge Statistics")
+    st.markdown('<div class="section-header">Overview</div>', unsafe_allow_html=True)
 
-    # Main stats
     col1, col2, col3 = st.columns(3)
-
     with col1:
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-number">{stats.get('total_cards_created', 0)}</div>
-            <div>Total Cards Created</div>
-        </div>
+            <div class="stat-card">
+                <div class="stat-value">{s.get('total', 0)}</div>
+                <div class="stat-label">Cards Created</div>
+            </div>
         """, unsafe_allow_html=True)
-
     with col2:
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-number">{stats.get('sessions', 0)}</div>
-            <div>Study Sessions</div>
-        </div>
+            <div class="stat-card">
+                <div class="stat-value">{s.get('sessions', 0)}</div>
+                <div class="stat-label">Sessions</div>
+            </div>
         """, unsafe_allow_html=True)
-
     with col3:
-        subjects = stats.get('cards_by_subject', {})
-        top_subject = max(subjects, key=subjects.get) if subjects else "None"
+        top = max(s.get("by_subject", {"None": 0}), key=s.get("by_subject", {}).get, default="None")
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-number" style="font-size: 1.5rem;">{top_subject}</div>
-            <div>Top Subject</div>
-        </div>
+            <div class="stat-card">
+                <div class="stat-value" style="font-size: 20px;">{top}</div>
+                <div class="stat-label">Top Subject</div>
+            </div>
         """, unsafe_allow_html=True)
 
-    st.markdown("---")
+    if s.get("by_subject"):
+        st.markdown('<div class="section-header">By Subject</div>', unsafe_allow_html=True)
+        max_val = max(s["by_subject"].values())
+        for subj, count in sorted(s["by_subject"].items(), key=lambda x: -x[1]):
+            pct = (count / max_val) * 100
+            st.markdown(f"""
+                <div class="progress-container">
+                    <div class="progress-label">
+                        <span class="progress-name">{subj}</span>
+                        <span class="progress-value">{count} cards</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {pct}%"></div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
-    # Cards by subject
-    if stats.get("cards_by_subject"):
-        st.markdown("### 📚 Cards by Subject")
-        for subject, count in sorted(stats["cards_by_subject"].items(), key=lambda x: x[1], reverse=True):
-            progress = count / max(stats["cards_by_subject"].values())
-            st.progress(progress, text=f"{subject}: {count} cards")
-
-    # Recent activity
-    if stats.get("cards_by_date"):
-        st.markdown("### 📅 Recent Activity")
-        dates = list(stats["cards_by_date"].items())[-7:]  # Last 7 days
-        for date, count in dates:
-            st.text(f"{date}: {'🎴' * min(count, 20)} ({count})")
-
-def render_history_panel():
-    """Render the card history panel"""
-    st.markdown("## 📜 Card History")
-
+def render_history():
     if not st.session_state.history:
-        st.info("No cards in history yet. Generate some cards to see them here!")
+        st.markdown("""
+            <div class="empty-state">
+                <div class="empty-icon">📚</div>
+                <div class="empty-title">No cards yet</div>
+                <div class="empty-desc">Cards you create will appear here for easy access later.</div>
+            </div>
+        """, unsafe_allow_html=True)
         return
 
-    # Search and filter
-    search = st.text_input("🔍 Search cards", placeholder="Search by content...")
+    search = st.text_input("Search cards", placeholder="Type to filter...", label_visibility="collapsed")
 
-    filtered_history = st.session_state.history
+    filtered = st.session_state.history
     if search:
-        filtered_history = [
-            h for h in st.session_state.history
-            if search.lower() in h.get("front", "").lower() or search.lower() in h.get("back", "").lower()
-        ]
+        filtered = [h for h in filtered if search.lower() in h.get("front", "").lower() or search.lower() in h.get("back", "").lower()]
 
-    st.markdown(f"Showing {len(filtered_history)} of {len(st.session_state.history)} cards")
+    st.caption(f"Showing {len(filtered)} of {len(st.session_state.history)} cards")
 
-    # Display cards
-    for i, card in enumerate(filtered_history[-50:]):  # Show last 50
-        with st.expander(f"📝 {card.get('front', '')[:60]}...", expanded=False):
+    for i, card in enumerate(filtered[-30:]):
+        with st.expander(f"{card.get('front', '')[:50]}..."):
             st.markdown(f"**Front:** {card.get('front', '')}")
             st.markdown(f"**Back:** {card.get('back', '')}")
-            st.markdown(f"**Created:** {card.get('created_at', 'Unknown')}")
-            st.markdown(f"**Subject:** {card.get('subject', 'Unknown')}")
-
-            if st.button("♻️ Reuse this card", key=f"reuse_{i}"):
-                if card not in st.session_state.cards:
-                    st.session_state.cards.append({
-                        "front": card.get("front", ""),
-                        "back": card.get("back", ""),
-                        "keep": True,
-                        "explanation": "Reused from history",
-                        "quality_score": card.get("quality_score", 3)
-                    })
-                    st.success("Card added!")
-                    st.rerun()
-
-    # Clear history button
-    st.markdown("---")
-    if st.button("🗑️ Clear History", type="secondary"):
-        if st.checkbox("Confirm clear history"):
-            st.session_state.history = []
-            save_history()
-            st.success("History cleared!")
-            st.rerun()
+            st.caption(f"{card.get('subject', 'General')} · {card.get('created', '')}")
 
 # ============================================================
-# MAIN APPLICATION
+# MAIN APP
 # ============================================================
 def main():
-    init_session_state()
+    init_state()
 
     # Apply theme
-    st.markdown(get_theme_css(st.session_state.theme), unsafe_allow_html=True)
-
-    # Header
-    col_title, col_theme = st.columns([4, 1])
-    with col_title:
-        st.markdown('<p class="main-header">🎴 CardForge</p>', unsafe_allow_html=True)
-        st.markdown('<p class="sub-header">Turn wrong answers into memorable flashcards</p>', unsafe_allow_html=True)
-    with col_theme:
-        theme_toggle = st.toggle("🌙 Dark Mode", value=st.session_state.theme == "dark")
-        st.session_state.theme = "dark" if theme_toggle else "light"
+    st.markdown(get_css(st.session_state.theme), unsafe_allow_html=True)
 
     # Sidebar
     with st.sidebar:
-        st.header("🔑 API Key")
-        api_key = st.text_input(
-            "Enter your Anthropic API key",
-            type="password",
-            help="Get your key at console.anthropic.com"
-        )
+        render_brand()
+
+        # API Key
+        st.markdown('<div class="section-header">API Key</div>', unsafe_allow_html=True)
+        api_key = st.text_input("Anthropic API Key", type="password", label_visibility="collapsed", placeholder="sk-ant-...")
 
         if api_key:
-            st.success("✓ API key entered")
+            st.markdown('<span class="badge badge-success">Connected</span>', unsafe_allow_html=True)
         else:
-            st.warning("Enter your API key to generate cards")
-            st.markdown("[Get an API key →](https://console.anthropic.com)")
+            st.caption("Get your key at [console.anthropic.com](https://console.anthropic.com)")
 
-        st.divider()
-        st.header("⚙️ Settings")
+        # Settings
+        st.markdown('<div class="section-header">Card Settings</div>', unsafe_allow_html=True)
 
-        exam_type = st.selectbox("📚 Exam/Course", list(exam_context.keys()))
-        card_format = st.selectbox("🃏 Card Format", list(card_format_instructions.keys()))
-        num_cards = st.slider("📊 Number of cards", 1, 20, 5)
+        exam = st.selectbox("Subject", list(EXAMS.keys()), label_visibility="collapsed")
+        card_format = st.selectbox("Format", list(FORMATS.keys()), label_visibility="collapsed")
+        num_cards = st.slider("Number of cards", 1, 15, 5)
+        difficulty = st.select_slider("Difficulty", ["Basic", "Standard", "Advanced", "Expert"], value="Standard")
 
-        st.divider()
+        # Export Settings
+        st.markdown('<div class="section-header">Export</div>', unsafe_allow_html=True)
+        deck_name = st.text_input("Deck name", value="My Cards", label_visibility="collapsed", placeholder="Deck name")
+        tags = st.text_input("Tags", label_visibility="collapsed", placeholder="tag1, tag2, tag3")
 
-        deck_name = st.text_input("📁 Deck name", value="My Cards")
-        tags = st.text_input("🏷️ Tags (comma-separated)", placeholder="e.g., physics, ultrasound")
+        # Options
+        st.markdown('<div class="section-header">Options</div>', unsafe_allow_html=True)
+        st.session_state.show_explanations = st.toggle("Show explanations", value=True)
+        st.session_state.bulk_mode = st.toggle("Bulk mode", value=False)
+        st.session_state.preview_mode = st.toggle("Preview mode", value=False)
 
-        st.divider()
-
-        difficulty = st.select_slider(
-            "💪 Difficulty",
-            options=["Basic recall", "Standard", "Application", "Integration"],
-            value="Standard"
-        )
-
-        st.divider()
-        st.header("🎛️ Features")
-
-        st.session_state.show_explanations = st.checkbox("💡 Show AI explanations", value=True)
-        st.session_state.bulk_mode = st.checkbox("📑 Bulk mode (multiple questions)", value=False)
-        st.session_state.preview_mode = st.checkbox("🎴 Card preview mode", value=False)
-        st.session_state.image_cards_mode = st.checkbox("🖼️ Image cards mode", value=False)
-        if SORTABLES_AVAILABLE:
-            st.session_state.reorder_mode = st.checkbox("↕️ Reorder cards mode", value=False)
+        # Theme toggle
+        st.markdown('<div class="section-header">Appearance</div>', unsafe_allow_html=True)
+        if st.toggle("Dark mode", value=st.session_state.theme == "dark"):
+            st.session_state.theme = "dark"
         else:
-            st.caption("↕️ Drag-drop: `pip install streamlit-sortables`")
+            st.session_state.theme = "light"
 
-        # AnkiConnect status
-        st.divider()
-        st.header("🔗 Anki Integration")
-        anki_status = check_anki_connect()
-        if anki_status:
-            st.success(f"✓ AnkiConnect v{anki_status.get('result', '?')}")
-            st.session_state.anki_connect_enabled = True
+        # Anki status
+        anki = check_anki()
+        if anki:
+            st.markdown('<span class="badge badge-success">Anki Connected</span>', unsafe_allow_html=True)
+            st.session_state.anki_connected = True
         else:
-            st.info("AnkiConnect not detected")
-            st.markdown("[Setup AnkiConnect →](https://ankiweb.net/shared/info/2055492159)")
-            st.session_state.anki_connect_enabled = False
+            st.session_state.anki_connected = False
 
-        # Keyboard shortcuts help
-        st.divider()
-        st.markdown("### ⌨️ Shortcuts")
-        st.markdown("""
-        <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> Generate<br>
-        <span class="kbd">Ctrl</span>+<span class="kbd">S</span> Download
-        """, unsafe_allow_html=True)
-
-    # Main content with tabs
-    tab1, tab2, tab3 = st.tabs(["✨ Generate", "📜 History", "📊 Statistics"])
+    # Main content
+    tab1, tab2, tab3 = st.tabs(["Create", "History", "Stats"])
 
     with tab1:
-        render_generate_tab(api_key, exam_type, card_format, num_cards, deck_name, tags, difficulty)
+        col1, col2 = st.columns([1, 1], gap="large")
+
+        with col1:
+            st.markdown('<div class="section-header">Input</div>', unsafe_allow_html=True)
+
+            input_type = st.radio(
+                "Input type",
+                ["Screenshot", "Text", "PDF"] if PDF_AVAILABLE else ["Screenshot", "Text"],
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+
+            uploaded_files = []
+            text_input = None
+            pdf_text = None
+
+            if input_type == "Screenshot":
+                if st.session_state.bulk_mode:
+                    uploaded_files = st.file_uploader("Upload screenshots", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
+                else:
+                    f = st.file_uploader("Upload screenshot", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+                    if f:
+                        st.image(f, use_container_width=True)
+                        uploaded_files = [f]
+
+            elif input_type == "Text":
+                placeholder = "Question 1...\n---\nQuestion 2..." if st.session_state.bulk_mode else "Paste the question you got wrong..."
+                text_input = st.text_area("Content", height=200, label_visibility="collapsed", placeholder=placeholder)
+
+            elif input_type == "PDF":
+                pdf_file = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")
+                if pdf_file:
+                    pdf_text = extract_pdf(pdf_file)
+                    if pdf_text:
+                        st.success(f"Extracted {len(pdf_text):,} characters")
+                    else:
+                        st.error("Could not extract text from PDF")
+
+            instructions = st.text_input("Special instructions (optional)", placeholder="Focus on..., I struggle with...", label_visibility="collapsed")
+
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                generate = st.button("Generate Cards", type="primary", use_container_width=True)
+            with col_btn2:
+                regenerate = st.button("Regenerate", use_container_width=True)
+
+        with col2:
+            st.markdown('<div class="section-header">Cards</div>', unsafe_allow_html=True)
+
+            if generate or regenerate:
+                if not api_key:
+                    st.error("Please enter your API key")
+                else:
+                    # Collect inputs
+                    inputs = []
+                    if uploaded_files:
+                        for f in uploaded_files:
+                            f.seek(0)
+                            inputs.append({"type": "image", "content": base64.b64encode(f.read()).decode()})
+                    elif text_input:
+                        if st.session_state.bulk_mode and "---" in text_input:
+                            for q in text_input.split("---"):
+                                if q.strip():
+                                    inputs.append({"type": "text", "content": q.strip()})
+                        else:
+                            inputs.append({"type": "text", "content": text_input})
+                    elif pdf_text:
+                        inputs.append({"type": "text", "content": pdf_text})
+
+                    if not inputs:
+                        st.warning("Please provide some content first")
+                    else:
+                        try:
+                            client = anthropic.Anthropic(api_key=api_key)
+
+                            # Auto-detect if needed
+                            actual_exam = exam
+                            if exam == "Auto-Detect" and inputs:
+                                with st.spinner("Detecting subject..."):
+                                    sample = inputs[0]["content"][:800] if inputs[0]["type"] == "text" else ""
+                                    actual_exam = detect_subject(client, sample)
+                                    st.info(f"Detected: **{actual_exam}**")
+
+                            settings = {
+                                "exam": actual_exam,
+                                "format": card_format,
+                                "count": num_cards,
+                                "difficulty": difficulty,
+                                "instructions": instructions + (" Make cards more general." if regenerate else ""),
+                                "is_image": False
+                            }
+
+                            st.session_state.cards = []
+
+                            progress = st.progress(0)
+                            for i, inp in enumerate(inputs):
+                                progress.progress((i + 1) / len(inputs))
+                                settings["is_image"] = inp["type"] == "image"
+
+                                with st.spinner("Creating cards..."):
+                                    new_cards = generate_cards(client, inp["content"], settings)
+
+                                    # Check duplicates
+                                    dupes = find_duplicates(new_cards, st.session_state.cards + st.session_state.history)
+                                    for d in dupes:
+                                        if d < len(new_cards):
+                                            new_cards[d]["is_duplicate"] = True
+
+                                    st.session_state.cards.extend(new_cards)
+
+                            progress.empty()
+                            st.session_state.generated = True
+
+                            # Update stats & history
+                            update_stats(len(st.session_state.cards), actual_exam)
+                            for card in st.session_state.cards:
+                                st.session_state.history.append({
+                                    **card,
+                                    "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                    "subject": actual_exam
+                                })
+                            save_data()
+
+                        except anthropic.AuthenticationError:
+                            st.error("Invalid API key")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+            # Display cards
+            if st.session_state.cards:
+                if st.session_state.preview_mode:
+                    cols = st.columns(2)
+                    for i, card in enumerate(st.session_state.cards):
+                        with cols[i % 2]:
+                            render_flip_card(card, i)
+                    st.divider()
+
+                for i, card in enumerate(st.session_state.cards):
+                    st.session_state.cards[i] = render_card_editor(card, i)
+
+                # Stats bar
+                kept = [c for c in st.session_state.cards if c.get("keep", True)]
+
+                st.divider()
+
+                mcol1, mcol2, mcol3 = st.columns(3)
+                with mcol1:
+                    st.metric("Total", len(st.session_state.cards))
+                with mcol2:
+                    st.metric("Selected", len(kept))
+                with mcol3:
+                    avg_q = sum(c.get("quality", 3) for c in kept) / len(kept) if kept else 0
+                    st.metric("Avg Quality", f"{avg_q:.1f}★")
+
+                # Export
+                if kept:
+                    st.divider()
+
+                    ecol1, ecol2 = st.columns(2)
+
+                    with ecol1:
+                        tag_str = " ".join(f"tags:{t.strip()}" for t in tags.split(",")) if tags else ""
+                        export = "\n".join(f"{c['front']}\t{c['back']}\t{tag_str}".strip() for c in kept)
+
+                        st.download_button(
+                            f"Download {len(kept)} cards",
+                            export,
+                            f"{deck_name.replace(' ', '_')}.txt",
+                            "text/plain",
+                            use_container_width=True
+                        )
+
+                    with ecol2:
+                        if st.session_state.anki_connected:
+                            if st.button(f"Send to Anki", use_container_width=True):
+                                result = send_to_anki(kept, deck_name, tags)
+                                if "error" in result:
+                                    st.error(result["error"])
+                                else:
+                                    st.success("Sent to Anki!")
+                        else:
+                            st.button("Send to Anki", disabled=True, use_container_width=True)
+                            st.caption("Open Anki with AnkiConnect")
+
+            elif st.session_state.generated:
+                st.info("No cards generated. Try different content.")
+            else:
+                st.markdown("""
+                    <div class="empty-state">
+                        <div class="empty-icon">✨</div>
+                        <div class="empty-title">Ready to create</div>
+                        <div class="empty-desc">Upload a screenshot or paste a question to generate flashcards.</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
     with tab2:
-        render_history_panel()
+        render_history()
 
     with tab3:
-        render_statistics_dashboard()
-
-    # Footer
-    st.divider()
-    st.markdown("""
-    <div style='text-align: center; color: #888; font-size: 0.9rem;'>
-        Built with Claude AI • Cards export directly to Anki • <a href="https://github.com">View on GitHub</a>
-    </div>
-    """, unsafe_allow_html=True)
-
-def render_generate_tab(api_key, exam_type, card_format, num_cards, deck_name, tags, difficulty):
-    """Render the main card generation tab"""
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        st.subheader("📥 Input")
-
-        if st.session_state.bulk_mode:
-            input_method = st.radio("Choose input method:", ["📷 Upload Screenshots", "📝 Paste Text", "📄 Upload PDF"], horizontal=True)
-        else:
-            input_method = st.radio("Choose input method:", ["📷 Upload Screenshot", "📝 Paste Text", "📄 Upload PDF"], horizontal=True)
-
-        uploaded_files = []
-        text_input = None
-        pdf_text = None
-
-        if "Screenshot" in input_method:
-            if st.session_state.bulk_mode:
-                uploaded_files = st.file_uploader(
-                    "Drop your screenshots here (multiple allowed)",
-                    type=["png", "jpg", "jpeg"],
-                    accept_multiple_files=True
-                )
-                if uploaded_files:
-                    cols = st.columns(min(len(uploaded_files), 3))
-                    for i, f in enumerate(uploaded_files[:3]):
-                        with cols[i]:
-                            st.image(f, caption=f"Image {i+1}", use_container_width=True)
-                    if len(uploaded_files) > 3:
-                        st.info(f"+{len(uploaded_files) - 3} more images")
-            else:
-                uploaded_file = st.file_uploader("Drop your screenshot here", type=["png", "jpg", "jpeg"])
-                if uploaded_file:
-                    st.image(uploaded_file, caption="Uploaded image", use_container_width=True)
-                    uploaded_files = [uploaded_file]
-
-        elif "Text" in input_method:
-            if st.session_state.bulk_mode:
-                text_input = st.text_area(
-                    "Paste multiple questions (separate with '---'):",
-                    height=300,
-                    placeholder="Question 1...\n---\nQuestion 2...\n---\nQuestion 3..."
-                )
-            else:
-                text_input = st.text_area(
-                    "Paste the question you got wrong:",
-                    height=250,
-                    placeholder="Include the question, answer choices, your answer, and the correct answer..."
-                )
-
-        elif "PDF" in input_method:
-            pdf_file = st.file_uploader("Upload PDF document", type=["pdf"])
-            if pdf_file:
-                with st.spinner("Extracting text from PDF..."):
-                    pdf_text = extract_text_from_pdf(pdf_file)
-                    if pdf_text and not pdf_text.startswith("Error"):
-                        st.success(f"Extracted {len(pdf_text)} characters")
-                        with st.expander("Preview extracted text"):
-                            st.text(pdf_text[:2000] + "..." if len(pdf_text) > 2000 else pdf_text)
-                    elif pdf_text:
-                        st.error(pdf_text)
-                        st.info("Install PyPDF2 for PDF support: `pip install PyPDF2`")
-                    else:
-                        st.warning("Could not extract text. Install PyPDF2: `pip install PyPDF2`")
-
-        custom_instructions = st.text_area(
-            "💬 Special instructions (optional)",
-            placeholder="e.g., I keep confusing X with Y, focus on the mechanism...",
-            height=80
-        )
-
-        bcol1, bcol2 = st.columns(2)
-        with bcol1:
-            generate_btn = st.button("✨ Generate Cards", type="primary", use_container_width=True)
-        with bcol2:
-            regenerate_btn = st.button("🔄 Regenerate", use_container_width=True)
-
-    with col2:
-        st.subheader("🎴 Generated Cards")
-
-        if generate_btn or regenerate_btn:
-            if not api_key:
-                st.error("⚠️ Please enter your API key in the sidebar")
-            else:
-                # Collect all inputs
-                all_inputs = []
-
-                if uploaded_files:
-                    for f in uploaded_files:
-                        f.seek(0)
-                        bytes_data = f.read()
-                        base64_image = base64.b64encode(bytes_data).decode("utf-8")
-                        all_inputs.append({"type": "image", "content": base64_image})
-                elif text_input:
-                    if st.session_state.bulk_mode and "---" in text_input:
-                        questions = [q.strip() for q in text_input.split("---") if q.strip()]
-                        for q in questions:
-                            all_inputs.append({"type": "text", "content": q})
-                    else:
-                        all_inputs.append({"type": "text", "content": text_input})
-                elif pdf_text and not pdf_text.startswith("Error"):
-                    all_inputs.append({"type": "text", "content": pdf_text})
-
-                if not all_inputs:
-                    st.warning("⚠️ Please upload an image, paste text, or upload a PDF first")
-                else:
-                    try:
-                        client = anthropic.Anthropic(api_key=api_key)
-
-                        # Auto-detect subject if selected
-                        actual_exam_type = exam_type
-                        if exam_type == "Auto-Detect":
-                            with st.spinner("🔍 Detecting subject..."):
-                                sample_content = all_inputs[0]["content"][:1000] if all_inputs[0]["type"] == "text" else "image content"
-                                actual_exam_type = detect_subject(client, sample_content)
-                                st.info(f"📚 Detected subject: **{actual_exam_type}**")
-                                st.session_state.detected_subject = actual_exam_type
-
-                        settings = {
-                            "exam_type": actual_exam_type,
-                            "card_format": card_format,
-                            "num_cards": num_cards,
-                            "difficulty": difficulty,
-                            "custom_instructions": custom_instructions + ("\n\nPrevious cards were too specific. Make these MORE GENERAL." if regenerate_btn else ""),
-                            "is_image": False
-                        }
-
-                        st.session_state.cards = []
-
-                        # Process each input
-                        progress = st.progress(0, text="Generating cards...")
-                        for i, inp in enumerate(all_inputs):
-                            progress.progress((i + 1) / len(all_inputs), text=f"Processing input {i+1}/{len(all_inputs)}...")
-
-                            settings["is_image"] = inp["type"] == "image"
-
-                            with st.spinner(f"🧠 Analyzing input {i+1} and creating cards..."):
-                                new_cards = generate_cards_with_explanation(client, inp["content"], settings)
-
-                                # Check for duplicates
-                                duplicates = find_duplicates(new_cards, st.session_state.cards + st.session_state.history)
-                                for idx in duplicates:
-                                    if idx < len(new_cards):
-                                        new_cards[idx]["is_duplicate"] = True
-
-                                st.session_state.cards.extend(new_cards)
-
-                        progress.empty()
-                        st.session_state.generated = True
-
-                        # Update statistics
-                        update_statistics(len(st.session_state.cards), actual_exam_type)
-
-                        # Add to history
-                        for card in st.session_state.cards:
-                            history_card = {
-                                **card,
-                                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                "subject": actual_exam_type
-                            }
-                            st.session_state.history.append(history_card)
-                        save_history()
-
-                    except anthropic.AuthenticationError:
-                        st.error("❌ Invalid API key. Please check and try again.")
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-
-        # Display cards
-        if st.session_state.cards:
-            # Preview mode toggle
-            if st.session_state.preview_mode:
-                st.markdown("### 🎴 Card Preview (click to flip)")
-                cols = st.columns(2)
-                for i, card in enumerate(st.session_state.cards):
-                    with cols[i % 2]:
-                        render_flip_card(card, i)
-                st.markdown("---")
-                st.markdown("### ✏️ Edit Cards")
-
-            # Drag-and-drop reorder mode
-            if st.session_state.get("reorder_mode", False) and SORTABLES_AVAILABLE:
-                st.markdown("### ↕️ Drag to Reorder Cards")
-                st.caption("Drag cards to change their order, then click 'Apply Order'")
-
-                # Create sortable items
-                card_items = [f"Card {i+1}: {card['front'][:40]}..." for i, card in enumerate(st.session_state.cards)]
-                sorted_items = sort_items(card_items, direction="vertical")
-
-                if sorted_items != card_items:
-                    # Extract new order from sorted items
-                    new_order = []
-                    for item in sorted_items:
-                        # Extract card number from "Card X: ..."
-                        card_num = int(item.split(":")[0].replace("Card ", "")) - 1
-                        new_order.append(card_num)
-
-                    if st.button("✅ Apply New Order", type="primary"):
-                        # Reorder cards based on new order
-                        st.session_state.cards = [st.session_state.cards[i] for i in new_order]
-                        st.success("Cards reordered!")
-                        st.rerun()
-
-                st.markdown("---")
-
-            # Editable cards
-            for i, card in enumerate(st.session_state.cards):
-                st.session_state.cards[i] = render_card_editor(card, i)
-
-            st.divider()
-
-            kept_cards = [c for c in st.session_state.cards if c.get("keep", True)]
-
-            scol1, scol2, scol3, scol4 = st.columns(4)
-            with scol1:
-                st.metric("Total Cards", len(st.session_state.cards))
-            with scol2:
-                st.metric("Selected", len(kept_cards))
-            with scol3:
-                st.metric("Removed", len(st.session_state.cards) - len(kept_cards))
-            with scol4:
-                avg_quality = sum(c.get("quality_score", 3) for c in kept_cards) / len(kept_cards) if kept_cards else 0
-                st.metric("Avg Quality", f"{avg_quality:.1f} ★")
-
-            if kept_cards:
-                # Export options
-                st.markdown("### 📤 Export Options")
-
-                export_col1, export_col2 = st.columns(2)
-
-                with export_col1:
-                    # File download
-                    tag_str = ""
-                    if tags:
-                        tag_list = [t.strip() for t in tags.split(",")]
-                        tag_str = " ".join([f"tags:{t}" for t in tag_list])
-
-                    anki_lines = []
-                    for c in kept_cards:
-                        line = f"{c['front']}\t{c['back']}"
-                        if tag_str:
-                            line += f"\t{tag_str}"
-                        anki_lines.append(line)
-
-                    anki_export = "\n".join(anki_lines)
-
-                    st.download_button(
-                        label=f"📥 Download {len(kept_cards)} cards (.txt)",
-                        data=anki_export,
-                        file_name=f"{deck_name.replace(' ', '_')}_flashcards.txt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-
-                with export_col2:
-                    # AnkiConnect direct send
-                    if st.session_state.anki_connect_enabled:
-                        if st.button(f"🚀 Send to Anki ({len(kept_cards)} cards)", use_container_width=True):
-                            with st.spinner("Sending to Anki..."):
-                                result = send_to_anki(kept_cards, deck_name, tags)
-                                if "error" in result:
-                                    st.error(f"Failed: {result['error']}")
-                                else:
-                                    st.success(f"✓ Sent {len(kept_cards)} cards to '{deck_name}'!")
-                    else:
-                        st.button("🚀 Send to Anki (not connected)", disabled=True, use_container_width=True)
-
-                # JSON export for sharing
-                st.markdown("#### 📦 Share Deck")
-                json_export = json.dumps({
-                    "deck_name": deck_name,
-                    "tags": tags,
-                    "cards": [{"front": c["front"], "back": c["back"]} for c in kept_cards],
-                    "created_at": datetime.now().isoformat(),
-                    "card_count": len(kept_cards)
-                }, indent=2)
-
-                st.download_button(
-                    label="📤 Export as JSON (shareable)",
-                    data=json_export,
-                    file_name=f"{deck_name.replace(' ', '_')}_deck.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-
-                # Import shared deck
-                with st.expander("📥 Import Shared Deck"):
-                    import_file = st.file_uploader("Upload JSON deck file", type=["json"], key="import_deck")
-                    if import_file:
-                        try:
-                            imported = json.load(import_file)
-                            st.info(f"Found {imported.get('card_count', len(imported.get('cards', [])))} cards in '{imported.get('deck_name', 'Unknown')}'")
-                            if st.button("Import Cards"):
-                                for card in imported.get("cards", []):
-                                    st.session_state.cards.append({
-                                        "front": card.get("front", ""),
-                                        "back": card.get("back", ""),
-                                        "keep": True,
-                                        "explanation": "Imported from shared deck",
-                                        "quality_score": 3
-                                    })
-                                st.success(f"Imported {len(imported.get('cards', []))} cards!")
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"Invalid file: {e}")
-
-                with st.expander("👀 Preview export"):
-                    st.code(anki_export)
-
-        elif st.session_state.generated:
-            st.info("No cards generated. Try adjusting your input.")
-        else:
-            st.info("👈 Upload a screenshot or paste a question to get started")
+        render_stats()
 
 if __name__ == "__main__":
     main()
